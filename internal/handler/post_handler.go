@@ -16,7 +16,7 @@ import (
 type PostHandler struct {
 	svc service.PostService
 }
-
+// constructor for PostHandler
 func NewPostHandler(svc service.PostService) *PostHandler {
 	return &PostHandler{svc: svc}
 }
@@ -33,7 +33,7 @@ func (h *PostHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // getAll handles GET /api/v1/posts
 func (h *PostHandler) getAll(w http.ResponseWriter, r *http.Request) {
-	posts, err := h.svc.GetAll()
+	posts, err := h.svc.GetAll() //call service layer to get all posts
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "failed to fetch posts")
 		return

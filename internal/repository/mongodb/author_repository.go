@@ -16,17 +16,18 @@ import (
 
 type authorRepository struct {
 	authors  *mongo.Collection
-	counters *mongo.Collection
+	counters *mongo.Collection // shared with postRepository; each entity uses a different _id key
 }
 
 // NewAuthorRepository returns a MongoDB-backed AuthorRepository.
 func NewAuthorRepository(db *mongo.Database) repository.AuthorRepository {
 	return &authorRepository{
 		authors:  db.Collection("authors"),
-		counters: db.Collection("counters"),
+		counters: db.Collection("counters"), // same collection as post counters, keyed by "authors"
 	}
 }
 
+// authorDoc is the MongoDB document shape; separate from domain.Author to keep bson tags out of the domain layer.
 type authorDoc struct {
 	ID        int64     `bson:"_id"`
 	Name      string    `bson:"name"`
@@ -34,6 +35,7 @@ type authorDoc struct {
 	UpdatedAt time.Time `bson:"updated_at"`
 }
 
+// toDomain converts the DB document to the domain struct returned to callers.
 func (d authorDoc) toDomain() *domain.Author {
 	return &domain.Author{
 		ID:        d.ID,
@@ -43,13 +45,15 @@ func (d authorDoc) toDomain() *domain.Author {
 	}
 }
 
+// nextID atomically increments the "authors" counter and returns the new value.
+// Uses findAndModify (upsert) so the counter document is created on first call.
 func (r *authorRepository) nextID(ctx context.Context) (int64, error) {
 	var counter struct {
 		Seq int64 `bson:"seq"`
 	}
 	err := r.counters.FindOneAndUpdate(
 		ctx,
-		bson.M{"_id": "authors"},
+		bson.M{"_id": "authors"},                        // separate counter key from "posts"
 		bson.M{"$inc": bson.M{"seq": int64(1)}},
 		options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After),
 	).Decode(&counter)
@@ -60,7 +64,7 @@ func (r *authorRepository) nextID(ctx context.Context) (int64, error) {
 }
 
 func (r *authorRepository) Create(author *domain.Author) (*domain.Author, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout) // opTimeout defined in post_repository.go
 	defer cancel()
 
 	id, err := r.nextID(ctx)
@@ -85,7 +89,7 @@ func (r *authorRepository) GetAll() ([]*domain.Author, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
-	cursor, err := r.authors.Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"_id": 1}))
+	cursor, err := r.authors.Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"_id": 1})) // sorted by ID for stable order
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +112,7 @@ func (r *authorRepository) GetByID(id int64) (*domain.Author, error) {
 
 	var doc authorDoc
 	err := r.authors.FindOne(ctx, bson.M{"_id": id}).Decode(&doc)
-	if errors.Is(err, mongo.ErrNoDocuments) {
+	if errors.Is(err, mongo.ErrNoDocuments) { // translate mongo error to shared sentinel
 		return nil, repository.ErrNotFound
 	}
 	if err != nil {
@@ -122,7 +126,7 @@ func (r *authorRepository) Update(id int64, req *domain.UpdateAuthorRequest) (*d
 	defer cancel()
 
 	fields := bson.M{"updated_at": time.Now()}
-	if req.Name != "" {
+	if req.Name != "" { // only include fields that were actually provided
 		fields["name"] = req.Name
 	}
 
@@ -131,7 +135,7 @@ func (r *authorRepository) Update(id int64, req *domain.UpdateAuthorRequest) (*d
 		ctx,
 		bson.M{"_id": id},
 		bson.M{"$set": fields},
-		options.FindOneAndUpdate().SetReturnDocument(options.After),
+		options.FindOneAndUpdate().SetReturnDocument(options.After), // return the updated document
 	).Decode(&doc)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return nil, repository.ErrNotFound
@@ -150,7 +154,7 @@ func (r *authorRepository) Delete(id int64) error {
 	if err != nil {
 		return err
 	}
-	if res.DeletedCount == 0 {
+	if res.DeletedCount == 0 { // document didn't exist
 		return repository.ErrNotFound
 	}
 	return nil

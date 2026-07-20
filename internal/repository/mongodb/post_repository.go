@@ -17,21 +17,22 @@ import (
 	"webapp/internal/repository"
 )
 
-const opTimeout = 10 * time.Second
+const opTimeout = 10 * time.Second // max time for any single DB operation
 
 type postRepository struct {
 	posts    *mongo.Collection
-	counters *mongo.Collection
+	counters *mongo.Collection // shared "counters" collection; each entity uses a different _id key
 }
 
-// New returns a MongoDB-backed PostRepository.
-func New(db *mongo.Database) repository.PostRepository {
+// NewPostRepository returns a MongoDB-backed PostRepository.
+func NewPostRepository(db *mongo.Database) repository.PostRepository {
 	return &postRepository{
 		posts:    db.Collection("posts"),
 		counters: db.Collection("counters"),
 	}
 }
 
+// postDoc is the MongoDB document shape; separate from domain.Post to keep bson tags out of the domain layer.
 type postDoc struct {
 	ID        int64     `bson:"_id"`
 	Title     string    `bson:"title"`
@@ -41,6 +42,7 @@ type postDoc struct {
 	UpdatedAt time.Time `bson:"updated_at"`
 }
 
+// toDomain converts the DB document to the domain struct returned to callers.
 func (d postDoc) toDomain() *domain.Post {
 	return &domain.Post{
 		ID:        d.ID,
@@ -53,13 +55,14 @@ func (d postDoc) toDomain() *domain.Post {
 }
 
 // nextID atomically increments the "posts" counter and returns the new value.
+// Uses findAndModify (upsert) so the counter document is created on first call.
 func (r *postRepository) nextID(ctx context.Context) (int64, error) {
 	var counter struct {
 		Seq int64 `bson:"seq"`
 	}
 	err := r.counters.FindOneAndUpdate(
 		ctx,
-		bson.M{"_id": "posts"},
+		bson.M{"_id": "posts"},                          // separate counter key from "authors"
 		bson.M{"$inc": bson.M{"seq": int64(1)}},
 		options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After),
 	).Decode(&counter)
@@ -97,7 +100,7 @@ func (r *postRepository) GetAll() ([]*domain.Post, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
-	cursor, err := r.posts.Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"_id": 1}))
+	cursor, err := r.posts.Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"_id": 1})) // sorted by ID for stable order
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +123,7 @@ func (r *postRepository) GetByID(id int64) (*domain.Post, error) {
 
 	var doc postDoc
 	err := r.posts.FindOne(ctx, bson.M{"_id": id}).Decode(&doc)
-	if errors.Is(err, mongo.ErrNoDocuments) {
+	if errors.Is(err, mongo.ErrNoDocuments) { // translate mongo error to shared sentinel
 		return nil, repository.ErrNotFound
 	}
 	if err != nil {
@@ -134,7 +137,7 @@ func (r *postRepository) Update(id int64, req *domain.UpdatePostRequest) (*domai
 	defer cancel()
 
 	fields := bson.M{"updated_at": time.Now()}
-	if req.Title != "" {
+	if req.Title != "" { // only include fields that were actually provided
 		fields["title"] = req.Title
 	}
 	if req.Content != "" {
@@ -146,7 +149,7 @@ func (r *postRepository) Update(id int64, req *domain.UpdatePostRequest) (*domai
 		ctx,
 		bson.M{"_id": id},
 		bson.M{"$set": fields},
-		options.FindOneAndUpdate().SetReturnDocument(options.After),
+		options.FindOneAndUpdate().SetReturnDocument(options.After), // return the updated document
 	).Decode(&doc)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return nil, repository.ErrNotFound
@@ -165,7 +168,7 @@ func (r *postRepository) Delete(id int64) error {
 	if err != nil {
 		return err
 	}
-	if res.DeletedCount == 0 {
+	if res.DeletedCount == 0 { // document didn't exist
 		return repository.ErrNotFound
 	}
 	return nil

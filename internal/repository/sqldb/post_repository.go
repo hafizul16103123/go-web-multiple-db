@@ -16,9 +16,9 @@ type postRepository struct {
 	db *sql.DB
 }
 
-// New runs the posts schema migration and returns a PostgreSQL-backed PostRepository.
+// NewPostRepository runs the posts schema migration and returns a PostgreSQL-backed PostRepository.
 // Call NewAuthorRepository first so the authors table already exists.
-func New(db *sql.DB) (repository.PostRepository, error) {
+func NewPostRepository(db *sql.DB) (repository.PostRepository, error) {
 	r := &postRepository{db: db}
 	if err := r.migrate(); err != nil {
 		return nil, err
@@ -47,7 +47,7 @@ func (r *postRepository) Create(post *domain.Post) (*domain.Post, error) {
 		RETURNING id, title, content, author_id, created_at, updated_at
 	`
 	row := r.db.QueryRow(q, post.Title, post.Content, post.AuthorID)
-	return scanPost(row)
+	return scanPost(row) // RETURNING avoids a second SELECT to get the generated ID
 }
 
 func (r *postRepository) GetAll() ([]*domain.Post, error) {
@@ -70,7 +70,7 @@ func (r *postRepository) GetAll() ([]*domain.Post, error) {
 		}
 		posts = append(posts, p)
 	}
-	return posts, rows.Err()
+	return posts, rows.Err() // rows.Err catches any error that occurred during iteration
 }
 
 func (r *postRepository) GetByID(id int64) (*domain.Post, error) {
@@ -79,7 +79,7 @@ func (r *postRepository) GetByID(id int64) (*domain.Post, error) {
 		FROM posts WHERE id = $1
 	`
 	p, err := scanPost(r.db.QueryRow(q, id))
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) { // translate sql sentinel to shared repository sentinel
 		return nil, repository.ErrNotFound
 	}
 	return p, err
@@ -94,6 +94,7 @@ func (r *postRepository) Update(id int64, req *domain.UpdatePostRequest) (*domai
 		WHERE  id = $3
 		RETURNING id, title, content, author_id, created_at, updated_at
 	`
+	// COALESCE(NULLIF($1, ''), title): if $1 is empty string → NULLIF returns NULL → COALESCE keeps existing value
 	p, err := scanPost(r.db.QueryRow(q, req.Title, req.Content, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, repository.ErrNotFound
@@ -110,13 +111,13 @@ func (r *postRepository) Delete(id int64) error {
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if n == 0 { // no rows deleted means the ID didn't exist
 		return repository.ErrNotFound
 	}
 	return nil
 }
 
-// scanner is satisfied by both *sql.Row and *sql.Rows.
+// scanner is satisfied by both *sql.Row and *sql.Rows, allowing scanPost/scanAuthor to work with both.
 type scanner interface {
 	Scan(dest ...any) error
 }

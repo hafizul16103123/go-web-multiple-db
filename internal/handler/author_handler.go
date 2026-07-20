@@ -30,6 +30,7 @@ func (h *AuthorHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/authors/{id}", h.delete)
 }
 
+// getAll handles GET /api/v1/authors
 func (h *AuthorHandler) getAll(w http.ResponseWriter, r *http.Request) {
 	authors, err := h.svc.GetAll()
 	if err != nil {
@@ -39,13 +40,14 @@ func (h *AuthorHandler) getAll(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, authors)
 }
 
+// create handles POST /api/v1/authors
 func (h *AuthorHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreateAuthorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" {
+	if req.Name == "" { // validate at the boundary before hitting the service
 		response.Error(w, http.StatusUnprocessableEntity, "name is required")
 		return
 	}
@@ -55,9 +57,10 @@ func (h *AuthorHandler) create(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "failed to create author")
 		return
 	}
-	response.JSON(w, http.StatusCreated, author)
+	response.JSON(w, http.StatusCreated, author) // 201 Created with the newly created author
 }
 
+// getByID handles GET /api/v1/authors/{id}
 func (h *AuthorHandler) getByID(w http.ResponseWriter, r *http.Request) {
 	id, err := authorPathID(r)
 	if err != nil {
@@ -67,7 +70,7 @@ func (h *AuthorHandler) getByID(w http.ResponseWriter, r *http.Request) {
 
 	author, err := h.svc.GetByID(id)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if errors.Is(err, repository.ErrNotFound) { // distinguish "not found" from server errors
 			response.Error(w, http.StatusNotFound, "author not found")
 			return
 		}
@@ -77,6 +80,7 @@ func (h *AuthorHandler) getByID(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, author)
 }
 
+// update handles PUT /api/v1/authors/{id}
 func (h *AuthorHandler) update(w http.ResponseWriter, r *http.Request) {
 	id, err := authorPathID(r)
 	if err != nil {
@@ -102,6 +106,7 @@ func (h *AuthorHandler) update(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, author)
 }
 
+// delete handles DELETE /api/v1/authors/{id}
 func (h *AuthorHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := authorPathID(r)
 	if err != nil {
@@ -120,6 +125,7 @@ func (h *AuthorHandler) delete(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, map[string]string{"message": "author deleted successfully"})
 }
 
+// authorPathID extracts and parses the {id} path parameter for author routes.
 func authorPathID(r *http.Request) (int64, error) {
 	return strconv.ParseInt(r.PathValue("id"), 10, 64)
 }

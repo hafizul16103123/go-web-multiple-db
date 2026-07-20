@@ -15,7 +15,7 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		DBDriver:   env("DB_DRIVER", "sql"),
-		SQLDSN:     env("SQL_DSN", "postgres://postgres:password@localhost:5432/webapp?sslmode=disable"),
+		SQLDSN:     env("SQL_DSN", "postgres://postgres:postgres@localhost:5432/webapp?sslmode=disable"),
 		MongoURI:   env("MONGO_URI", "mongodb://localhost:27017"),
 		MongoDB:    env("MONGO_DB", "webapp"),
 		ServerAddr: env("SERVER_ADDR", ":8080"),

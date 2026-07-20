@@ -11,9 +11,9 @@ type Author struct {
 }
 
 type CreateAuthorRequest struct {
-	Name string `json:"name"`
+	Name string `json:"name"` // required; handler rejects empty string
 }
 
 type UpdateAuthorRequest struct {
-	Name string `json:"name"`
+	Name string `json:"name"` // empty string means "no change" (COALESCE in SQL, nil-check in memory/mongo)
 }

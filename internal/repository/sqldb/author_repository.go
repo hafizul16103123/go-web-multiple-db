@@ -41,7 +41,7 @@ func (r *authorRepository) Create(author *domain.Author) (*domain.Author, error)
 		RETURNING id, name, created_at, updated_at
 	`
 	row := r.db.QueryRow(q, author.Name)
-	return scanAuthor(row)
+	return scanAuthor(row) // RETURNING avoids a second SELECT to get the generated ID
 }
 
 func (r *authorRepository) GetAll() ([]*domain.Author, error) {
@@ -60,13 +60,13 @@ func (r *authorRepository) GetAll() ([]*domain.Author, error) {
 		}
 		authors = append(authors, a)
 	}
-	return authors, rows.Err()
+	return authors, rows.Err() // rows.Err catches any error that occurred during iteration
 }
 
 func (r *authorRepository) GetByID(id int64) (*domain.Author, error) {
 	const q = `SELECT id, name, created_at, updated_at FROM authors WHERE id = $1`
 	a, err := scanAuthor(r.db.QueryRow(q, id))
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) { // translate sql sentinel to shared repository sentinel
 		return nil, repository.ErrNotFound
 	}
 	return a, err
@@ -80,6 +80,7 @@ func (r *authorRepository) Update(id int64, req *domain.UpdateAuthorRequest) (*d
 		WHERE  id = $2
 		RETURNING id, name, created_at, updated_at
 	`
+	// COALESCE(NULLIF($1, ''), name): if $1 is empty string → NULLIF returns NULL → COALESCE keeps existing value
 	a, err := scanAuthor(r.db.QueryRow(q, req.Name, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, repository.ErrNotFound
@@ -96,12 +97,13 @@ func (r *authorRepository) Delete(id int64) error {
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if n == 0 { // no rows deleted means the ID didn't exist
 		return repository.ErrNotFound
 	}
 	return nil
 }
 
+// scanAuthor reads a single author row; reuses the scanner interface defined in post_repository.go.
 func scanAuthor(row scanner) (*domain.Author, error) {
 	a := &domain.Author{}
 	err := row.Scan(&a.ID, &a.Name, &a.CreatedAt, &a.UpdatedAt)

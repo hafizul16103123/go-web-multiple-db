@@ -9,9 +9,9 @@ import (
 )
 
 type authorRepository struct {
-	mu      sync.RWMutex
+	mu      sync.RWMutex         // guards store and counter for concurrent access
 	store   map[int64]*domain.Author
-	counter int64
+	counter int64 // monotonically incrementing ID; replaces DB auto-increment
 }
 
 // NewAuthorRepository returns a thread-safe in-memory AuthorRepository.
@@ -28,18 +28,18 @@ func (r *authorRepository) Create(author *domain.Author) (*domain.Author, error)
 	author.CreatedAt = time.Now()
 	author.UpdatedAt = time.Now()
 
-	cloned := *author
+	cloned := *author        // store a copy so the caller can't mutate internal state
 	r.store[author.ID] = &cloned
 	return author, nil
 }
 
 func (r *authorRepository) GetAll() ([]*domain.Author, error) {
-	r.mu.RLock()
+	r.mu.RLock() // read lock: multiple readers allowed concurrently
 	defer r.mu.RUnlock()
 
 	authors := make([]*domain.Author, 0, len(r.store))
 	for _, a := range r.store {
-		cloned := *a
+		cloned := *a // return copies so callers can't mutate store entries
 		authors = append(authors, &cloned)
 	}
 	return authors, nil
@@ -65,7 +65,7 @@ func (r *authorRepository) Update(id int64, req *domain.UpdateAuthorRequest) (*d
 	if !ok {
 		return nil, repository.ErrNotFound
 	}
-	if req.Name != "" {
+	if req.Name != "" { // empty string means "no change" — mirrors COALESCE logic in sqldb
 		a.Name = req.Name
 	}
 	a.UpdatedAt = time.Now()
